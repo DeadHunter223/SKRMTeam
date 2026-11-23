@@ -15,11 +15,13 @@ namespace SKRMTeam.Services
         private IntPtr _client = IntPtr.Zero;
         private CancellationTokenSource? _cts;
 
-        // Offsets — обновляются из OffsetsService при старте
-        private long _dwEntityList = 39124592;
-        private long _dwLocalPlayerController = 37223280;
-        private long _mSteamID = 1920;
-        private long _mIszPlayerName = 1780;
+        // Offsets — обновляются из OffsetsService при старте.
+        // Дефолты = актуальные значения на момент правки, чтобы первый скан
+        // (до того, как скачаются свежие offsets) тоже работал корректно.
+        private long _dwEntityList = 40949168;
+        private long _dwLocalPlayerController = 38990592;
+        private long _mSteamID = 1928;
+        private long _mIszPlayerName = 1788;
 
         public void UpdateOffsets(OffsetsService o)
         {
@@ -131,37 +133,37 @@ namespace SKRMTeam.Services
             var result = new List<(string, string)>();
             try
             {
-                // EntityList ptr
-                IntPtr entityListAddr = ReadPointer(_client + (nint)_dwEntityList);
-                if (entityListAddr == IntPtr.Zero) return result;
+                // entityList — указатель, хранящийся по адресу client.dll + dwEntityList (1-й deref)
+                IntPtr entityList = ReadPointer(_client + (nint)_dwEntityList);
+                if (entityList == IntPtr.Zero) return result;
 
-                // Сканируем до 8 chunks
-                for (int chunk = 0; chunk < 8; chunk++)
+                // Контроллеры игроков сидят на индексах 1..64 (до 64 слотов игроков).
+                for (int i = 1; i <= 64; i++)
                 {
-                    // chunk ptr = EntityList + 0x10 + chunk * 8
-                    IntPtr chunkPtr = ReadPointer(entityListAddr + (nint)(0x10 + chunk * 8));
-                    if (chunkPtr == IntPtr.Zero) continue;
-
-                    // Каждый chunk содержит до 512 entity ptr с шагом 8 байт
-                    for (int i = 0; i < 512; i++)
+                    try
                     {
-                        try
-                        {
-                            IntPtr ctrl = ReadPointer(chunkPtr + (nint)(i * 8));
-                            if (ctrl == IntPtr.Zero) continue;
+                        // chunk = *(entityList + 0x8 * (i >> 9) + 0x10)   — 2-й deref
+                        IntPtr chunk = ReadPointer(entityList + (nint)(0x8 * (i >> 9) + 0x10));
+                        if (chunk == IntPtr.Zero) continue;
 
-                            ulong steamId64 = ReadULong(ctrl + (nint)_mSteamID);
-                            if (steamId64 < 76561197960265728UL || steamId64 > 76561202255233023UL) continue;
+                        // controller = *(chunk + 0x70 * (i & 0x1FF))   — 3-й deref
+                        // 0x70 = sizeof(CEntityIdentity). Раньше был шаг 8 — читал мусор,
+                        // поэтому никого (кроме себя из GSI) оверлей и не находил.
+                        IntPtr ctrl = ReadPointer(chunk + (nint)(0x70 * (i & 0x1FF)));
+                        if (ctrl == IntPtr.Zero) continue;
 
-                            string name = ReadString(ctrl + (nint)_mIszPlayerName, 128);
-                            if (string.IsNullOrWhiteSpace(name)) continue;
+                        ulong steamId64 = ReadULong(ctrl + (nint)_mSteamID);
+                        // Валидный SteamID64: 76561197960265728 + accountID (0..2^32-1)
+                        if (steamId64 < 76561197960265728UL || steamId64 > 76561202255233023UL) continue;
 
-                            string sid = steamId64.ToString();
-                            if (!result.Exists(p => p.Item1 == sid))
-                                result.Add((sid, name));
-                        }
-                        catch { }
+                        string name = ReadString(ctrl + (nint)_mIszPlayerName, 128);
+                        if (string.IsNullOrWhiteSpace(name)) continue;
+
+                        string sid = steamId64.ToString();
+                        if (!result.Exists(p => p.Item1 == sid))
+                            result.Add((sid, name));
                     }
+                    catch { }
                 }
             }
             catch (Exception ex)

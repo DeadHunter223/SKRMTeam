@@ -13,11 +13,12 @@ namespace SKRMTeam.Services
     {
         private readonly HttpClient _httpClient = new();
 
-        // Дефолтные offsets на случай если GitHub недоступен
-        public long DwEntityList { get; private set; } = 39124592;
-        public long DwLocalPlayerController { get; private set; } = 37223280;
-        public long MSteamID { get; private set; } = 1920;
-        public long MIszPlayerName { get; private set; } = 1780;
+        // Дефолтные offsets (актуальны на момент правки) на случай если GitHub недоступен.
+        // При каждом запуске перезаписываются свежими из cs2-dumper.
+        public long DwEntityList { get; private set; } = 40949168;
+        public long DwLocalPlayerController { get; private set; } = 38990592;
+        public long MSteamID { get; private set; } = 1928;
+        public long MIszPlayerName { get; private set; } = 1788;
 
         public event Action<string>? OnLog;
 
@@ -49,8 +50,8 @@ namespace SKRMTeam.Services
                 var baseCtrl = FindClass(clientDll, "CBasePlayerController");
                 if (baseCtrl != null)
                 {
-                    MSteamID = baseCtrl["m_steamID"]?["offset"]?.ToObject<long>() ?? MSteamID;
-                    MIszPlayerName = baseCtrl["m_iszPlayerName"]?["offset"]?.ToObject<long>() ?? MIszPlayerName;
+                    MSteamID = FieldOffset(baseCtrl, "m_steamID", MSteamID);
+                    MIszPlayerName = FieldOffset(baseCtrl, "m_iszPlayerName", MIszPlayerName);
                     Log($"m_steamID: {MSteamID}, m_iszPlayerName: {MIszPlayerName}");
                 }
 
@@ -79,5 +80,20 @@ namespace SKRMTeam.Services
         }
 
         private void Log(string msg) => OnLog?.Invoke($"[OFFSETS] {msg}");
+
+        // cs2-dumper менял формат client_dll.json: раньше поле класса было объектом
+        // вида {"offset": N, "type": ...}, сейчас — просто число N. Поддерживаем оба,
+        // чтобы не откатываться на битые дефолты при следующем изменении дампа.
+        private static long FieldOffset(JObject? fields, string name, long fallback)
+        {
+            var token = fields?[name];
+            if (token is JObject obj)
+            {
+                var off = obj["offset"];
+                return off != null ? off.ToObject<long>() : fallback;
+            }
+            if (token == null) return fallback;
+            return token.ToObject<long>();
+        }
     }
 }
